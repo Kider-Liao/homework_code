@@ -1,0 +1,31 @@
+MODULE test;
+    CONST PI = 3;
+    TYPE int = INTEGER;
+         bool = BOOLEAN;
+         struct = RECORD
+            a : int;
+            b : int;
+            c : int
+        END;
+        arr = ARRAY 10 OF INTEGER;
+    VAR a,b,c : int;
+             d : struct;
+    PROCEDURE gcd(b:int;d:int;VAR e:struct);
+        BEGIN
+            IF b # 0 THEN
+                gcd (b,a MOD b,e)
+            ELSE
+                c := a
+            END
+        END gcd;
+    BEGIN
+        READ(a);
+        READ(b);
+        gcd(a,b,d);
+        WRITE(c);
+        WHILE c+5*2 > 10 DO
+            c := 0;
+            struct.c := 10;
+            arr[5] := 4
+        END
+    END test.

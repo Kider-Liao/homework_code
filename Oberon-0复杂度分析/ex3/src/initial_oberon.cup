@@ -1,0 +1,1087 @@
+import exceptions.*;
+import java_cup.runtime.*;
+import java.io.*;
+import nonterminal.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.ArrayList;
+
+/*embeded code in class*/
+parser code{:
+    List<HashMap<String,Type>> symbol_list;
+    int if_level;
+    int while_level;
+    int top;
+
+    int res;
+    String get_res(){
+        return Integer.toString(res);
+    }
+    public boolean check_type(Type a, Type b) {
+		if(a.type.size()!=b.type.size()) {
+			return false;
+		}
+		for(int i = 0;i<a.type.size();i++) {
+			String t1 = a.type.get(i);
+			String t2 = b.type.get(i);
+			if(!t1.equalsIgnoreCase(t2)) return false;
+		}
+		if(a.left==true && b.left==false) return false;
+		if(a.type.get(1).equalsIgnoreCase("array")) {
+			return check_type(a.arr_type,b.arr_type);
+		}
+		else if(a.type.get(1).equalsIgnoreCase("record")) {
+			HashMap<String,Type> map1 = a.symbol_list;
+			HashMap<String,Type> map2 = b.symbol_list;
+			if(map1.size()!=map2.size()) {
+				return false;
+			}
+			Set<String> key = map1.keySet();
+			for(String s:key) {
+				Type t1 = map1.get(s);
+				if(!map2.containsKey(s)) return false;
+				Type t2 = map2.get(s);
+				if(!check_type(t1,t2)) return false;
+			}
+		}
+		return true;
+	}
+    public Type select_field(Type type,String select) throws Exception{
+		Type pre = type;
+		String iden = "";
+		for(int i = 0;i<select.length();i++) {
+			if(select.charAt(i)=='.') {
+				i++;
+				while(i<select.length()&&select.charAt(i)!='.'&&select.charAt(i)!='[') {
+					iden+=select.charAt(i);
+					i++;
+				}
+				i--;
+				if(pre.type.size()>1&&pre.type.get(1).equalsIgnoreCase("record")&&pre.symbol_list.containsKey(iden)) {
+					pre = pre.symbol_list.get(iden);
+					iden = "";
+				}
+				else {
+					throw new SemanticException("Identifier hasn't been declared");
+				}
+			}
+			else if(select.charAt(i)=='[') {
+				i++;
+				while(i<select.length()&&select.charAt(i)!=']') {
+					i++;
+				}
+				if(pre.type.size()>1&&pre.type.get(1).equalsIgnoreCase("array")) {
+					pre = pre.arr_type;
+				}
+				else {
+					return null;
+				}
+			}
+		}
+		return pre;
+	}
+:};
+
+/*init class*/
+init with{:
+    if_level = 0;
+    while_level = 0;
+    symbol_list = new ArrayList<HashMap<String,Type>>();
+    HashMap<String,Type> base = new HashMap<String,Type>();
+    symbol_list.add(base);
+    top = 0;
+    res = 0;
+:};
+
+/*scan method*/
+scan with {: 
+    return getScanner().next_token(); 
+:};
+
+/*Terminals*/
+
+/*operator*/
+terminal EQUAL, NEQUAL, LESS, ELESS, MORE, EMORE, ADD, MINUS, OR, MUL, DIV, MOD, AND, NOT;
+
+/*reserved words*/
+terminal MODULE, BEGIN, END, CONST, TYPE, VAR, RECORD, ARRAY, OF, WHILE, DO, IF, THEN, ELSIF, ELSE, PROCEDURE;
+
+/*type*/
+terminal INTEGER, BOOLEAN;
+
+/*punctuation*/
+terminal LPATH,RPATH,DOT,SEMI,COLON,COMMA,ASSIGN,LBRACK,RBRACK;
+
+/*constant*/
+terminal Integer DIGIT;
+
+/*identifier*/
+terminal String IDENTIFIER;
+
+/*Nonterminals*/
+non terminal Nonterminal module,declarations,const_declare,identifier_const,type_declare,identifier_type,var_declare,identifier_var,procedure_declare,procedure_declaration,statement_sequence,optional_statement,statement,while_statement,if_statement,elsif_statement,else_statement,procedure_call,assignment,sign;
+
+non terminal Procedure procedure_heading,procedure_body;
+
+non terminal Parameter formal_parameters,optional_fp,fp_section,actual_parameters,optional_expression;
+
+non terminal Type type;
+
+non terminal Rec record_type,optional_field,field_list;
+
+non terminal Arr array_type;
+
+non terminal Selector identifier_list,optional_identifier,selector;
+
+non terminal Type expression,simple_expression,optional_term,term,optional_factor,factor;
+
+non terminal M,N,relaop;
+
+/*precedences*/
+precedence left OR;
+precedence left AND;
+precedence right NOT;
+precedence left EQUAL, NEQUAL, LESS, ELESS, MORE, EMORE;
+precedence left ADD, MINUS;
+precedence left MUL, DIV, MOD;
+
+
+/*Grammer*/
+module ::= MODULE IDENTIFIER:id1 SEMI declarations:declar END IDENTIFIER:id2 DOT
+{:
+    if(!id1.equalsIgnoreCase(id2)){
+        throw new SemanticException("Module name mismatched!");
+    }
+    RESULT = new Nonterminal();
+    RESULT.complexity = declar.complexity;
+    res = RESULT.complexity;
+:}
+| MODULE IDENTIFIER:id1 SEMI declarations:declar BEGIN statement_sequence:ss END IDENTIFIER:id2 DOT
+{:
+    if(!id1.equalsIgnoreCase(id2)){
+        throw new SemanticException("Module name mismatched!");
+    }
+    RESULT = new Nonterminal();
+    RESULT.complexity = declar.complexity + ss.complexity;
+    res = RESULT.complexity;
+:}
+;
+
+declarations ::= const_declare:cd type_declare:td var_declare:vd procedure_declare:pd
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = cd.complexity+td.complexity+vd.complexity+pd.complexity;
+:}
+;
+
+const_declare ::= CONST identifier_const:ic
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = ic.complexity+5;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:}
+;
+
+identifier_const ::= identifier_const:ic IDENTIFIER:id EQUAL expression:e SEMI
+{:
+    RESULT = new Nonterminal();
+    if(symbol_list.get(top).containsKey(id)){
+        throw new SemanticException("Identifier name has been used!");
+    }
+    symbol_list.get(top).put(id,e);
+    RESULT.complexity = 1+e.complexity+ic.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+type_declare ::= TYPE identifier_type:it
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 10+it.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:}
+;
+
+identifier_type ::= identifier_type:it IDENTIFIER:id EQUAL type:t SEMI
+{:
+    RESULT = new Nonterminal();
+    t.type.set(0,"type");
+    if(symbol_list.get(top).containsKey(id)){
+        throw new SemanticException("Identifier name has been used!");
+    }
+    symbol_list.get(top).put(id,t);
+    //System.out.println(id);
+    RESULT.complexity = 1+t.complexity+it.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+var_declare ::= VAR identifier_var:iv 
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = iv.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+identifier_var ::= identifier_var:iv identifier_list:il COLON type:t SEMI
+{:
+    RESULT = new Nonterminal();
+    String[] i_list = il.value.split(" ");
+    /*定义用于计算的变量*/
+    for(int i = 0;i<i_list.length;i++){
+        if(symbol_list.get(top).containsKey(i_list[i])){
+            throw new SemanticException("Identifier name has been used!");
+        }
+        symbol_list.get(top).put(i_list[i],t);
+    }
+    RESULT.complexity = il.complexity + t.complexity + iv.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:}
+;
+
+procedure_declare ::= procedure_declare:pd2 procedure_declaration:pd1 SEMI
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = pd1.complexity + pd2.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+procedure_declaration ::= procedure_heading:ph SEMI procedure_body:pb
+{:
+    RESULT = new Nonterminal();
+    if(!ph.name.equalsIgnoreCase(pb.name)){
+        throw new SemanticException("Procedure name isn't matched");
+    }
+    RESULT.complexity = ph.complexity + pb.complexity;
+:};
+
+procedure_body ::= declarations:declar END IDENTIFIER:id 
+{:
+    RESULT = new Procedure();
+    symbol_list.remove(top);
+    top = top-1;
+    RESULT.name = id;
+    RESULT.complexity = declar.complexity;
+:}
+| declarations:declar BEGIN statement_sequence:ss END IDENTIFIER:id
+{:
+    RESULT = new Procedure();
+    symbol_list.remove(top);
+    top = top-1;
+    RESULT.name = id;
+    RESULT.complexity = declar.complexity + ss.complexity;
+:};
+
+procedure_heading ::= PROCEDURE IDENTIFIER:id 
+{:
+    RESULT = new Procedure();
+    /*将过程插入符号表*/
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.para = new ArrayList<Type>();
+    pre.type.add("procedure");
+    if(symbol_list.get(top).containsKey(id)){
+        throw new SemanticException("Identifier name has been used!");
+    }
+    symbol_list.get(top).put(id,pre);
+    //System.out.println("succeed!");
+    HashMap<String,Type> base = new HashMap<String,Type>();
+    symbol_list.add(base);
+    top = top+1;
+    RESULT.name = id;
+    RESULT.complexity = 20;
+:}
+| PROCEDURE IDENTIFIER:id formal_parameters:fp
+{:
+    RESULT = new Procedure();
+    /*将过程插入符号表*/
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.type.add("procedure");
+    pre.para = fp.para;
+    if(symbol_list.get(top).containsKey(id)){
+        throw new SemanticException("Identifier name has been used!");
+    }
+    symbol_list.get(top).put(id,pre);
+    //System.out.println("succeed!");
+    HashMap<String,Type> base = new HashMap<String,Type>();
+    symbol_list.add(base);
+    top = top+1;
+    RESULT.name = id;
+    RESULT.complexity = 20 + fp.complexity;
+    /*将参数列表也插入符号表中*/
+    int num = fp.para.size();
+    for(int i = 0;i<num;i++){
+        String name = fp.var.get(i);
+        Type t = fp.para.get(i);
+        if(symbol_list.get(top).containsKey(name)){
+            throw new SemanticException("Identifier name has been used!");
+        }
+        symbol_list.get(top).put(name,t);
+    }
+    
+:};
+
+formal_parameters ::= LPATH RPATH 
+{:
+    RESULT = new Parameter();
+    RESULT.para = new ArrayList<Type>();
+    RESULT.var = new ArrayList<String>();
+    RESULT.complexity = 0;
+:}
+| LPATH fp_section:fs optional_fp:ofp RPATH 
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = fs.complexity + ofp.complexity;
+    /*连接对应的参数表,首先检查是否有重复变量名*/
+    for(int i = 0;i<fs.var.size();i++){
+        String pre = fs.var.get(i);
+        if(ofp.var.contains(pre)){
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    fs.var.addAll(ofp.var);
+    fs.para.addAll(ofp.para);
+    RESULT.var = fs.var;
+    RESULT.para = fs.para;
+:};
+
+optional_fp ::= SEMI fp_section:fs optional_fp:ofp 
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = fs.complexity + ofp.complexity;
+    /*连接对应的参数表,首先检查是否有重复变量名*/
+    for(int i = 0;i<fs.var.size();i++){
+        String pre = fs.var.get(i);
+        if(ofp.var.contains(pre)){
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    fs.var.addAll(ofp.var);
+    fs.para.addAll(ofp.para);
+    RESULT.var = fs.var;
+    RESULT.para = fs.para;
+:}
+| /*empty*/
+{:
+    RESULT = new Parameter();
+    RESULT.para = new ArrayList<Type>();
+    RESULT.var = new ArrayList<String>();
+    RESULT.complexity = 0;
+:};
+
+fp_section ::= identifier_list:il COLON type:t 
+{:
+    RESULT = new Parameter();
+    RESULT.para = new ArrayList<Type>();
+    RESULT.var = new ArrayList<String>();
+    String[] i_list = il.value.split(" ");
+    for(int i = 0;i<i_list.length;i++){
+        if(!RESULT.var.contains(i_list[i])){
+            RESULT.para.add(t);
+            RESULT.var.add(i_list[i]);
+        }
+        else{
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    RESULT.complexity = il.complexity + t.complexity;
+:}
+| VAR identifier_list:il COLON type:t
+{:
+    RESULT = new Parameter();
+    RESULT.para = new ArrayList<Type>();
+    RESULT.var = new ArrayList<String>();
+    t.left = true;
+    String[] i_list = il.value.split(" ");
+    for(int i = 0;i<i_list.length;i++){
+        if(!RESULT.var.contains(i_list[i])){
+            RESULT.para.add(t);
+            RESULT.var.add(i_list[i]);
+        }
+        else{
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    RESULT.complexity = il.complexity + t.complexity;
+:};
+
+type ::= IDENTIFIER:id 
+{:
+    int pos = -1;
+    for(int i = top;i>=0;i--){
+        if(symbol_list.get(i).containsKey(id)){
+            pos = i;
+            break;
+        }
+    }
+    if(pos==-1){
+        throw new SemanticException("Identifier hasn't been declared");
+    }
+    Type pre = symbol_list.get(pos).get(id);
+    if(!pre.type.get(0).equalsIgnoreCase("type")){
+        throw new SemanticException("This identifier isn't a type");
+    }
+    Type p = new Type();
+    p.type = new ArrayList<String>();
+    p.type.add("calculate");
+    p.type.add(pre.type.get(1));
+    p.symbol_list = pre.symbol_list;
+    p.arr_type = pre.arr_type;
+    p.para = pre.para;
+    RESULT = p;
+    RESULT.complexity = 2;
+:}
+| array_type:at
+{:
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.arr_type = at.base_type;
+    pre.type.add("calculate");
+    pre.type.add("array");
+    pre.complexity = at.complexity+8;
+    RESULT = pre;
+:}
+| record_type:rt
+{:
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.type.add("calculate");
+    pre.type.add("record");
+    pre.symbol_list = rt.symbol_list;
+    pre.complexity = rt.complexity+3;
+    RESULT = pre;
+:}
+| INTEGER 
+{:
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.type.add("calculate");
+    pre.type.add("integer");
+    pre.complexity = 1;
+    RESULT = pre;
+:}
+| BOOLEAN
+{:
+    Type pre = new Type();
+    pre.type = new ArrayList<String>();
+    pre.type.add("calculate");
+    pre.type.add("boolean");
+    pre.complexity = 1;
+    RESULT = pre;
+:};
+
+record_type ::= RECORD field_list:fl optional_field:opf END
+{:
+    Rec pre = new Rec();
+    HashMap<String,Type> list1 = fl.symbol_list;
+    HashMap<String,Type> list2 = opf.symbol_list;
+    /*查重*/
+    Set<String> key = list1.keySet();
+    
+    for(String s:key){
+        if(list2.containsKey(s)){
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    list1.putAll(list2);
+    pre.symbol_list = list1;
+    pre.complexity = fl.complexity + opf.complexity;
+    RESULT = pre;
+:};
+
+optional_field ::= SEMI field_list:fl optional_field:opf
+{:
+    Rec pre = new Rec();
+    HashMap<String,Type> list1 = fl.symbol_list;
+    HashMap<String,Type> list2 = opf.symbol_list;
+    /*查重*/
+    Set<String> key = list1.keySet();
+    for(String s:key){
+        if(list2.containsKey(s)){
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    list1.putAll(list2);
+    pre.symbol_list = list1;
+    pre.complexity = fl.complexity + opf.complexity;
+    RESULT = pre;
+:} 
+| /*empty*/
+{:
+    Rec pre = new Rec();
+    pre.symbol_list = new HashMap<String,Type>();
+    pre.complexity = 0;
+    RESULT = pre;
+:};
+
+field_list ::= identifier_list:il COLON type:t 
+{:  
+    Rec pre = new Rec();
+    pre.symbol_list = new HashMap<String,Type>();
+    String[] i_list = il.value.split(" ");
+    for(int i = 0;i<i_list.length;i++){
+        if(!pre.symbol_list.containsKey(i_list[i])){
+            pre.symbol_list.put(i_list[i],t);
+        }
+        else{
+            throw new SemanticException("Identifier name has been used!");
+        }
+    }
+    pre.complexity = il.complexity + t.complexity;
+    RESULT = pre;
+    //System.out.println(il.value);
+:}
+| /*empty*/
+{:
+    Rec pre = new Rec();
+    pre.symbol_list = new HashMap<String,Type>();
+    pre.complexity = 0;
+    RESULT = pre;
+:};
+
+array_type ::= ARRAY expression:e OF type:t
+{:
+    Arr pre = new Arr();
+    if(!e.type.get(0).equalsIgnoreCase("calculate")||!e.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    pre.base_type = t;
+    pre.complexity = e.complexity + t.complexity;
+    RESULT = pre;
+:};
+
+identifier_list ::= IDENTIFIER:id optional_identifier:oi
+{:
+    String pre = id + " " + oi.value;
+    oi.value = pre;
+    RESULT = oi;
+    RESULT.complexity += 1;
+:};
+
+optional_identifier ::= COMMA IDENTIFIER:id optional_identifier:oi 
+{:
+    String pre = id + " " + oi.value;
+    oi.value = pre;
+    RESULT = oi;
+    RESULT.complexity += 1;
+:}
+| /*empty*/
+{:
+    Selector pre = new Selector();
+    pre.complexity = 0;
+    pre.value = "";
+    RESULT = pre;
+:};
+
+statement_sequence ::= statement:s optional_statement:os
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = s.complexity + os.complexity;
+    RESULT = pre;
+:};
+
+optional_statement ::= SEMI statement:s optional_statement:os 
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = s.complexity + os.complexity;
+    RESULT = pre;
+:}| /*empty*/
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = 0;
+    RESULT = pre;
+:};
+
+statement ::= assignment:a 
+{:
+    /*简单语句*/
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = a.complexity * (if_level+1) * (int)Math.pow(2,while_level);
+    RESULT = pre;
+:}
+| procedure_call:p 
+{:
+    /*简单语句*/
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = p.complexity * (if_level+1) * (int)Math.pow(2,while_level);
+    RESULT = pre;
+:}
+| if_statement:is 
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = is.complexity;
+    RESULT = pre;
+:}
+| while_statement:ws 
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = ws.complexity;
+    RESULT = pre;
+:}
+| /*empty*/
+{:
+    Nonterminal pre = new Nonterminal();
+    pre.complexity = 0;
+    RESULT = pre;
+:};
+
+while_statement ::= WHILE M expression:e DO statement_sequence:ss END
+{:
+    
+    if(!e.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT = new Nonterminal();
+    RESULT.complexity += e.complexity*(if_level+1) * (int)Math.pow(2,while_level) + ss.complexity;
+    while_level -= 1;
+:};
+
+M ::= /*empty*/
+{:
+    while_level += 1;
+:};
+
+if_statement ::= IF N expression:e THEN statement_sequence:ss elsif_statement:els else_statement:es END
+{:
+    RESULT = new Nonterminal();
+    if(!e.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity += e.complexity*(if_level+1) * (int)Math.pow(2,while_level) + ss.complexity + els.complexity + es.complexity;
+    if_level -= 1;
+:};
+
+N ::= /*empty*/
+{:
+    if_level += 1;
+:};
+
+elsif_statement ::= ELSIF expression:e THEN statement_sequence:ss elsif_statement:els 
+{:
+    RESULT = new Nonterminal();
+    if(!e.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = e.complexity*(if_level+1) * (int)Math.pow(2,while_level) + ss.complexity + els.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+else_statement ::= ELSE statement_sequence:ss 
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = ss.complexity;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+procedure_call ::= IDENTIFIER:id 
+{:
+    if(id.equalsIgnoreCase("read")||id.equalsIgnoreCase("write")||id.equalsIgnoreCase("writeln")){
+        Nonterminal pre = new Nonterminal();
+        pre.complexity = 8;
+        RESULT = pre;
+    }
+    else{
+        Nonterminal pre = new Nonterminal();
+        int pos = -1;
+        for(int i = top;i>=0;i--){
+            if(symbol_list.get(i).containsKey(id)){
+                pos = i;
+                break;
+            }
+        }
+        if(pos==-1){
+            throw new SemanticException("Identifier isn't been declared!");
+        }
+        Type t = symbol_list.get(pos).get(id);
+        if(!t.type.get(0).equalsIgnoreCase("procedure")){
+            throw new TypeMismatchedException();
+        }
+        pre.complexity = 8;
+        RESULT = pre;
+    }
+    
+:}
+| IDENTIFIER:id actual_parameters:ap
+{:
+    if(id.equalsIgnoreCase("read")||id.equalsIgnoreCase("write")||id.equalsIgnoreCase("writeln")){
+        Nonterminal pre = new Nonterminal();
+        pre.complexity = 8+ap.complexity;
+        RESULT = pre;
+    }
+    else{
+        Nonterminal pre = new Nonterminal();
+        int pos = -1;
+        for(int i = top;i>=0;i--){
+            if(symbol_list.get(i).containsKey(id)){
+                pos = i;
+                break;
+            }
+        }
+        if(pos==-1){
+            throw new SemanticException("Identifier isn't been declared!");
+        }
+        Type t = symbol_list.get(pos).get(id);
+        if(!t.type.get(0).equalsIgnoreCase("procedure")){
+            throw new TypeMismatchedException();
+        }
+        List<Type> para1 = t.para;
+        List<Type> para2 = ap.para;
+        if(para1.size()!=para2.size()){
+            throw new ParameterMismatchedException();
+        }
+        for(int i = 0;i<para1.size();i++){
+            if(!check_type(para1.get(i),para2.get(i))){
+                throw new TypeMismatchedException();
+            }
+        }
+        pre.complexity = 8+ap.complexity;
+        RESULT = pre;
+    }
+:};
+
+actual_parameters ::= LPATH RPATH 
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = 0;
+    RESULT.para = new ArrayList<Type>();
+:}
+| LPATH expression:e optional_expression:oe RPATH
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = e.complexity + oe.complexity;
+    RESULT.para = new ArrayList<Type>();
+    RESULT.para.add(e);
+    RESULT.para.addAll(oe.para);
+:};
+
+optional_expression ::= COMMA expression:e optional_expression:oe 
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = e.complexity + oe.complexity;
+    RESULT.para = new ArrayList<Type>();
+    RESULT.para.add(e);
+    RESULT.para.addAll(oe.para);
+:}
+| /*empty*/
+{:
+    RESULT = new Parameter();
+    RESULT.complexity = 0;
+    RESULT.para = new ArrayList<Type>();
+:};
+
+assignment ::= IDENTIFIER:id selector:s ASSIGN expression:e
+{:  
+    int pos = -1;
+    for(int i = top;i>=0;i--){
+        if(symbol_list.get(i).containsKey(id)){
+            pos = i;
+            break;
+        }
+    }
+    if(pos==-1){
+        throw new SemanticException("Identifier isn't been declared!");
+    }
+    Type pre = symbol_list.get(pos).get(id);
+    String select = s.value;
+    /*检查对应的selector是否对应正确的type*/
+    Type after = select_field(pre,select);
+    if(after==null||!check_type(after,e)){
+        throw new TypeMismatchedException();
+    }
+    RESULT = new Nonterminal();
+    RESULT.complexity = s.complexity + e.complexity + 2;
+:};
+
+expression ::= simple_expression:se 
+{:
+    RESULT = se;
+:}
+| simple_expression:se1 relaop simple_expression:se2
+{:
+    RESULT = new Type();
+    if(!se1.type.get(1).equalsIgnoreCase("integer")||!se2.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = se1.complexity + se2.complexity + 4;
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("boolean");
+:};
+
+relaop ::= EQUAL | NEQUAL | LESS | ELESS | MORE | EMORE;
+
+simple_expression ::= sign:s term:t optional_term:ot
+{:
+    if(ot.type.size()==0){
+        RESULT = t;
+        RESULT.complexity += s.complexity;
+    }
+    else{
+        RESULT = new Type();
+        if(ot.type.size()>1&&!t.type.get(1).equalsIgnoreCase(ot.type.get(1))){
+            throw new TypeMismatchedException();
+        }
+        RESULT.complexity = t.complexity + ot.complexity + s.complexity;
+        RESULT.type = new ArrayList<String>();
+        RESULT.type.add("calculate");
+        RESULT.type.add(t.type.get(1));
+    }
+    
+:};
+
+sign ::= ADD 
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 2;
+:}
+| MINUS 
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 2;
+:}
+| /*empty*/
+{:
+    RESULT = new Nonterminal();
+    RESULT.complexity = 0;
+:};
+
+optional_term ::= ADD term:t optional_term:ot 
+{:
+    RESULT = new Type();
+    if(!t.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    if(ot.type.size()>1&&!ot.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+    RESULT.complexity = t.complexity + ot.complexity + 2;
+:}
+| MINUS term:t optional_term:ot 
+{:
+    RESULT = new Type();
+    if(!t.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    if(ot.type.size()>1&&!ot.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+    RESULT.complexity = t.complexity + ot.complexity + 2;
+:}
+| OR term:t optional_term:ot 
+{:
+    RESULT = new Type();
+    if(!t.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    if(ot.type.size()>1&&!ot.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("boolean");
+    RESULT.complexity = t.complexity + ot.complexity + 6;
+:}
+| /*empty*/
+{:
+    RESULT = new Type();
+    RESULT.type = new ArrayList<String>();
+    RESULT.complexity = 0;
+:};
+
+term ::= factor:f optional_factor:of
+{:
+    if(of.type.size()==0){
+        RESULT = f;
+    }
+    else{
+        RESULT = new Type();
+        if(of.type.size()>1&&!f.type.get(1).equalsIgnoreCase(of.type.get(1))){
+            throw new TypeMismatchedException();
+        }
+        RESULT.complexity = f.complexity + of.complexity;
+        RESULT.type = new ArrayList<String>();
+        RESULT.type.add("calculate");
+        RESULT.type.add(f.type.get(1));
+    }
+    
+:};
+
+optional_factor ::= MUL factor:f optional_factor:of 
+{:
+    RESULT = new Type();
+    if(!f.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    if(of.type.size()>1&&!of.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = f.complexity + of.complexity + 4;
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+:}
+| DIV factor:f optional_factor:of 
+{:
+    RESULT = new Type();
+    if(!f.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    if(of.type.size()>1&&!of.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = f.complexity + of.complexity + 4;
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+:}
+| MOD factor:f optional_factor:of 
+{:
+    RESULT = new Type();
+    if(!f.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    if(of.type.size()>1&&!of.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = f.complexity + of.complexity + 4;
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+:}
+| AND factor:f optional_factor:of 
+{:
+    RESULT = new Type();
+    if(!f.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    if(of.type.size()>1&&!of.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = f.complexity + of.complexity + 6;
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("boolean");
+:}
+| /*empty*/
+{:
+    RESULT = new Type();
+    RESULT.type = new ArrayList<String>();
+    RESULT.complexity = 0;
+:};
+
+factor ::= IDENTIFIER:id selector:s 
+{:
+    int pos = -1;
+    for(int i = top;i>=0;i--){
+        if(symbol_list.get(i).containsKey(id)){
+            pos = i;
+            break;
+        }
+    }
+    if(pos==-1){
+        throw new SemanticException("The identifier hasn't been declared");
+    }
+    Type pre = symbol_list.get(pos).get(id);
+    if(pre.type.get(0).equalsIgnoreCase("procedure")){
+        throw new TypeMismatchedException();
+    }
+    RESULT = new Type();
+    Type after = select_field(pre,s.value);
+    if(after == null){
+        throw new TypeMismatchedException();
+    }
+    RESULT.complexity = s.complexity;
+    RESULT.type = after.type;
+    RESULT.symbol_list = after.symbol_list;
+    RESULT.arr_type = after.arr_type;
+    RESULT.para = after.para;
+    RESULT.left = true;
+:}
+| DIGIT 
+{:
+    RESULT = new Type();
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("integer");
+    RESULT.complexity = 0;
+:}
+| LPATH expression:e RPATH 
+{:
+    RESULT = e;
+    RESULT.complexity+=6;
+:}
+| NOT factor:f
+{:
+    if(!f.type.get(1).equalsIgnoreCase("boolean")){
+        throw new TypeMismatchedException();
+    }
+    RESULT = new Type();
+    RESULT.type = new ArrayList<String>();
+    RESULT.type.add("calculate");
+    RESULT.type.add("boolean");
+    RESULT.complexity = f.complexity + 6;
+:};
+
+selector ::= DOT IDENTIFIER:id selector:s 
+{:
+    s.value = "." + id + s.value;
+    RESULT = s;
+    RESULT.complexity += 2;
+:}
+| LBRACK expression:e RBRACK selector:s
+{:
+    if(!e.type.get(1).equalsIgnoreCase("integer")){
+        throw new TypeMismatchedException();
+    }
+    s.value = "[]"+s.value;
+    RESULT = s;
+    RESULT.complexity += 2+e.complexity;
+:} 
+| /*empty*/
+{:
+    RESULT = new Selector();
+    RESULT.value = "";
+    RESULT.complexity = 0;
+:};

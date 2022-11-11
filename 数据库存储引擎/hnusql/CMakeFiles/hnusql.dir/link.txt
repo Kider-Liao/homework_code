@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../../archive_output_directory/libhnusql.a  CMakeFiles/hnusql.dir/ha_hnu.cc.o CMakeFiles/hnusql.dir/transparent_file.cc.o
+/usr/bin/ranlib ../../archive_output_directory/libhnusql.a
